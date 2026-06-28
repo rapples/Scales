@@ -15,7 +15,7 @@ import urllib.request
 #   pip install streamlit numpy
 #
 # Run:
-#   streamlit run app.py
+#   streamlit run scales.py
 # ============================================================
 
 
