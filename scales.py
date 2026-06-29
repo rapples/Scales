@@ -10,11 +10,7 @@ import struct
 import http.cookiejar
 import urllib.parse
 import urllib.request
-from streamlit_hybrid_auth import StreamlitHybridAuth
 
-
-# Suppress noisy auth cookie warnings on this page.
-logging.getLogger('streamlit_cognito_auth').setLevel(logging.ERROR)
 
 # ============================================================
 # Guitar Mode Finder Prototype
@@ -1954,24 +1950,6 @@ st.set_page_config(
     page_icon="🎸",
     layout="wide"
 )
-
-authenticator = StreamlitHybridAuth()
-
-if not authenticator.is_authenticated():
-    st.warning("🔐 Please sign in to access Guitar Mode Finder.")
-    if not authenticator.render(show_signup=False):
-        st.stop()
-
-username = str(authenticator.get_username() or '').strip()
-allowed = username.lower() == 'root' or 'leyden' in username.lower()
-
-if not allowed:
-    st.error("⛔ Access denied.")
-    st.info("This page is limited to root and usernames containing 'leyden'.")
-    if st.button("🚪 Log out"):
-        authenticator.logout()
-        st.rerun()
-    st.stop()
 
 st.title("🎸 Guitar Mode Finder")
 st.caption(
