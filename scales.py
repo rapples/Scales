@@ -5,8 +5,16 @@ import io
 import html
 import json
 import logging
+import re
+import struct
+import http.cookiejar
+import urllib.parse
 import urllib.request
+from streamlit_hybrid_auth import StreamlitHybridAuth
 
+
+# Suppress noisy auth cookie warnings on this page.
+logging.getLogger('streamlit_cognito_auth').setLevel(logging.ERROR)
 
 # ============================================================
 # Guitar Mode Finder Prototype
@@ -15,7 +23,7 @@ import urllib.request
 #   pip install streamlit numpy
 #
 # Run:
-#   streamlit run scales.py
+#   streamlit run app.py
 # ============================================================
 
 
@@ -142,6 +150,91 @@ WEB_SAMPLE_SOURCES = {
         "url": "https://raw.githubusercontent.com/nbrosowsky/tonejs-instruments/master/samples/flute/C5.wav",
         "base_midi": 72,
     },
+    "Bass Electric (E1 sample)": {
+        "url": "https://raw.githubusercontent.com/nbrosowsky/tonejs-instruments/master/samples/bass-electric/E1.wav",
+        "base_midi": 28,
+    },
+    "Blocks (Xylophone C5 sample)": {
+        "url": "https://raw.githubusercontent.com/nbrosowsky/tonejs-instruments/master/samples/xylophone/C5.wav",
+        "base_midi": 72,
+    },
+    "Trumpet (C4 sample)": {
+        "url": "https://raw.githubusercontent.com/nbrosowsky/tonejs-instruments/master/samples/trumpet/C4.wav",
+        "base_midi": 60,
+    },
+    "Trombone (C3 sample)": {
+        "url": "https://raw.githubusercontent.com/nbrosowsky/tonejs-instruments/master/samples/trombone/C3.wav",
+        "base_midi": 48,
+    },
+    "French Horn (C4 sample)": {
+        "url": "https://raw.githubusercontent.com/nbrosowsky/tonejs-instruments/master/samples/french-horn/C4.wav",
+        "base_midi": 60,
+    },
+    "Saxophone (C4 sample)": {
+        "url": "https://raw.githubusercontent.com/nbrosowsky/tonejs-instruments/master/samples/saxophone/C4.wav",
+        "base_midi": 60,
+    },
+    "Organ (C4 sample)": {
+        "url": "https://raw.githubusercontent.com/nbrosowsky/tonejs-instruments/master/samples/organ/C4.wav",
+        "base_midi": 60,
+    },
+    "Standup Bass (Contrabass C2 sample)": {
+        "url": "https://raw.githubusercontent.com/nbrosowsky/tonejs-instruments/master/samples/contrabass/C2.wav",
+        "base_midi": 36,
+    },
+    "Chorus (Harmonium C4 sample)": {
+        "url": "https://raw.githubusercontent.com/nbrosowsky/tonejs-instruments/master/samples/harmonium/C4.wav",
+        "base_midi": 60,
+    },
+}
+
+CHANNEL_COLOR_SEQUENCE = [
+    ("Yellow", "#ffe066"),
+    ("Red", "#ff6b6b"),
+    ("Blue", "#4dabf7"),
+    ("Green", "#69db7c"),
+    ("Orange", "#ffa94d"),
+    ("Purple", "#b197fc"),
+    ("Cyan", "#66d9e8"),
+    ("Pink", "#f783ac"),
+]
+
+PUBLIC_MIDI_SOURCES = {
+    "Fur Elise (Beethoven)": "https://www.mfiles.co.uk/downloads/fur-elise.mid",
+    "Greensleeves": "https://www.mfiles.co.uk/downloads/greensleeves.mid",
+    "Nocturne Op.9 No.2 (Chopin)": "https://www.mfiles.co.uk/downloads/chopin-nocturne-op9-no2.mid",
+    "Symphony No.5 - 1st Movement (Beethoven)": "https://www.mfiles.co.uk/downloads/beethoven-symphony5-1.mid",
+    "Moonlight Sonata 1 (Guitar, Beethoven/Tarrega)": "https://www.mfiles.co.uk/downloads/beethoven-tarrega-moonlight-sonata1-guitar.mid",
+    "Cello Suite No.1 Prelude (Bach)": "https://www.mfiles.co.uk/downloads/bach-cello-suite-no1-prelude.mid",
+    "Lullaby (Brahms)": "https://www.mfiles.co.uk/downloads/brahms-lullaby-wiegenlied.mid",
+    "Carol of the Bells": "https://www.mfiles.co.uk/downloads/carol-of-the-bells.mid",
+    "Auld Lang Syne": "https://www.mfiles.co.uk/downloads/auld-lang-syne.mid",
+    "Ode to Joy (Piano Solo)": "https://www.mfiles.co.uk/downloads/beethoven-symphony9-4-ode-to-joy-piano-solo.mid",
+    "Minuet (Boccherini)": "https://www.mfiles.co.uk/downloads/Boccherini-Minuet.mid",
+    "Grateful Dead - Around And Around": "https://freemidi.org/download3-22437-around-and-around-grateful-dead",
+    "Grateful Dead - Big Railroad Blues": "https://freemidi.org/download3-25137-big-railroad-blues-grateful-dead",
+    "Grateful Dead - Casey Jones": "https://freemidi.org/download3-3516-casey-jones-grateful-dead",
+    "Grateful Dead - Casey Jones (2)": "https://freemidi.org/download3-25138-casey-jones-2-grateful-dead",
+    "Grateful Dead - Cripple Creek": "https://freemidi.org/download3-22438-cripple-creek-grateful-dead",
+    "Grateful Dead - Dark Star": "https://freemidi.org/download3-3517-dark-star-grateful-dead",
+    "Grateful Dead - Fire On The Mountain": "https://freemidi.org/download3-3518-fire-on-the-mountain-grateful-dead",
+    "Grateful Dead - Franklin's Tower": "https://freemidi.org/download3-3519-franklins-tower-grateful-dead",
+    "Grateful Dead - Friend Of The Devil": "https://freemidi.org/download3-3520-friend-of-the-devil-grateful-dead",
+    "Grateful Dead - Going Down The Road Feelin Bad": "https://freemidi.org/download3-25139-going-down-the-road-feelin-bad-grateful-dead",
+    "Grateful Dead - Not Fade Away": "https://freemidi.org/download3-22436-not-fade-away-grateful-dead",
+    "Grateful Dead - Operator": "https://freemidi.org/download3-3521-operator-grateful-dead",
+    "Grateful Dead - Ramble On Rose": "https://freemidi.org/download3-3522-ramble-on-rose-grateful-dead",
+    "Grateful Dead - Ripple": "https://freemidi.org/download3-3523-ripple-grateful-dead",
+    "Grateful Dead - Scarlet Begonias": "https://freemidi.org/download3-3524-scarlet-begonias-grateful-dead",
+    "Grateful Dead - Terapin Station": "https://freemidi.org/download3-3525-terapin-station-grateful-dead",
+    "Grateful Dead - The Golden Road To Unlimited Devotion": "https://freemidi.org/download3-3526-the-golden-road-to-unlimited-devotion-grateful-dead",
+    "Grateful Dead - Throwing Stones": "https://freemidi.org/download3-3527-throwing-stones-grateful-dead",
+    "Grateful Dead - Truckin": "https://freemidi.org/download3-3528-truckin-grateful-dead",
+    "Grateful Dead - Truckin (2)": "https://freemidi.org/download3-25140-truckin-2-grateful-dead",
+    "Grateful Dead - Turn On Your Love Light": "https://freemidi.org/download3-25141-turn-on-your-love-light-grateful-dead",
+    "Grateful Dead - Uncle John's Band": "https://freemidi.org/download3-3529-uncle-johns-band-grateful-dead",
+    "Grateful Dead - Uncle Johns Band (2)": "https://freemidi.org/download3-25142-uncle-johns-band-2-grateful-dead",
+    "Grateful Dead - West La Fadeaway": "https://freemidi.org/download3-3530-west-la-fadeaway-grateful-dead",
 }
 
 
@@ -194,6 +287,397 @@ def note_frequency_from_midi(midi_num: int) -> float:
     A4 = MIDI 69 = 440 Hz.
     """
     return 440.0 * (2 ** ((midi_num - 69) / 12))
+
+
+def _read_vlq(data: bytes, idx: int) -> tuple[int, int]:
+    value = 0
+    while idx < len(data):
+        b = data[idx]
+        idx += 1
+        value = (value << 7) | (b & 0x7F)
+        if (b & 0x80) == 0:
+            break
+    return value, idx
+
+
+@st.cache_data(show_spinner=False, ttl=24 * 3600)
+def _fetch_public_midi_bytes(url: str) -> bytes:
+    headers = {"User-Agent": "WeedHounds-Scales/1.0"}
+
+    # FreeMidi pages expose a download page (download3-...) with a cookie-backed
+    # getter endpoint. Follow that flow so we receive raw MIDI bytes.
+    if "freemidi.org/download3-" in url or "freemidi.net/download3-" in url:
+        jar = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+
+        page_req = urllib.request.Request(url, headers=headers)
+        with opener.open(page_req, timeout=20) as resp:
+            page_html = resp.read().decode("utf-8", errors="ignore")
+
+        getter_match = re.search(
+            r'id\s*=\s*["\']?downloadmidi["\']?[^>]*href\s*=\s*["\']?([^"\'\s>]+)',
+            page_html,
+            flags=re.IGNORECASE,
+        )
+        if not getter_match:
+            getter_match = re.search(r'href\s*=\s*["\']?(getter-[^"\'\s>]+)', page_html, flags=re.IGNORECASE)
+        if not getter_match:
+            raise ValueError("Could not find FreeMidi getter link")
+
+        getter_url = urllib.parse.urljoin(url, getter_match.group(1))
+        getter_req = urllib.request.Request(getter_url, headers={**headers, "Referer": url})
+        with opener.open(getter_req, timeout=20) as resp:
+            data = resp.read()
+
+        if not data.startswith(b"MThd"):
+            raise ValueError("FreeMidi getter did not return MIDI bytes")
+        return data
+
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return resp.read()
+
+
+def parse_midi_note_on_events(midi_bytes: bytes, max_events: int | None = 500) -> list[dict]:
+    """Parse note-on events from a standard MIDI file into timed events."""
+    if not midi_bytes.startswith(b"MThd"):
+        return []
+
+    header_len = struct.unpack(">I", midi_bytes[4:8])[0]
+    if header_len < 6:
+        return []
+
+    _, ntrks, division = struct.unpack(">HHH", midi_bytes[8:14])
+    if division == 0:
+        return []
+
+    idx = 8 + header_len
+    all_events = []
+    tempo_us_per_quarter = 500_000
+
+    for _ in range(ntrks):
+        if idx + 8 > len(midi_bytes) or midi_bytes[idx:idx + 4] != b"MTrk":
+            break
+        track_len = struct.unpack(">I", midi_bytes[idx + 4:idx + 8])[0]
+        track_data = midi_bytes[idx + 8:idx + 8 + track_len]
+        idx += 8 + track_len
+
+        t_idx = 0
+        abs_ticks = 0
+        abs_seconds = 0.0
+        running_status = None
+
+        while t_idx < len(track_data):
+            delta_ticks, t_idx = _read_vlq(track_data, t_idx)
+            abs_ticks += delta_ticks
+            abs_seconds += (delta_ticks * tempo_us_per_quarter) / (division * 1_000_000.0)
+            if t_idx >= len(track_data):
+                break
+
+            status = track_data[t_idx]
+            if status < 0x80:
+                if running_status is None:
+                    break
+                status = running_status
+            else:
+                t_idx += 1
+                running_status = status if status < 0xF0 else running_status
+
+            if status == 0xFF:
+                if t_idx >= len(track_data):
+                    break
+                meta_type = track_data[t_idx]
+                t_idx += 1
+                meta_len, t_idx = _read_vlq(track_data, t_idx)
+                meta_data = track_data[t_idx:t_idx + meta_len]
+                t_idx += meta_len
+                if meta_type == 0x51 and len(meta_data) == 3:
+                    tempo_us_per_quarter = (meta_data[0] << 16) | (meta_data[1] << 8) | meta_data[2]
+                continue
+
+            if status in (0xF0, 0xF7):
+                syx_len, t_idx = _read_vlq(track_data, t_idx)
+                t_idx += syx_len
+                continue
+
+            msg_type = status & 0xF0
+            if msg_type in (0x80, 0x90, 0xA0, 0xB0, 0xE0):
+                if t_idx + 2 > len(track_data):
+                    break
+                d1 = track_data[t_idx]
+                d2 = track_data[t_idx + 1]
+                t_idx += 2
+                if msg_type == 0x90 and d2 > 0:
+                    all_events.append({
+                        "time": abs_seconds,
+                        "midi": int(d1),
+                        "channel": int(status & 0x0F),
+                    })
+            elif msg_type in (0xC0, 0xD0):
+                if t_idx + 1 > len(track_data):
+                    break
+                t_idx += 1
+            else:
+                break
+
+            if max_events is not None and len(all_events) >= max_events:
+                break
+
+        if max_events is not None and len(all_events) >= max_events:
+            break
+
+    all_events.sort(key=lambda e: e["time"])
+    return all_events if max_events is None else all_events[:max_events]
+
+
+def _normalize_key_note_name(note: str) -> str:
+    enharmonic_to_sharp = {
+        "Cb": "B",
+        "Db": "C#",
+        "Eb": "D#",
+        "Fb": "E",
+        "Gb": "F#",
+        "Ab": "G#",
+        "Bb": "A#",
+    }
+    if note in CHROMATIC_SHARPS:
+        return note
+    return enharmonic_to_sharp.get(note, note)
+
+
+def extract_midi_key_signature(midi_bytes: bytes) -> tuple[str, str] | None:
+    """Extract key from MIDI meta event FF 59 (if present)."""
+    if not midi_bytes.startswith(b"MThd"):
+        return None
+
+    header_len = struct.unpack(">I", midi_bytes[4:8])[0]
+    if header_len < 6:
+        return None
+
+    ntrks = struct.unpack(">H", midi_bytes[10:12])[0]
+    idx = 8 + header_len
+
+    major_keys = {
+        -7: "Cb", -6: "Gb", -5: "Db", -4: "Ab", -3: "Eb", -2: "Bb", -1: "F",
+        0: "C", 1: "G", 2: "D", 3: "A", 4: "E", 5: "B", 6: "F#", 7: "C#",
+    }
+    minor_keys = {
+        -7: "Ab", -6: "Eb", -5: "Bb", -4: "F", -3: "C", -2: "G", -1: "D",
+        0: "A", 1: "E", 2: "B", 3: "F#", 4: "C#", 5: "G#", 6: "D#", 7: "A#",
+    }
+
+    for _ in range(ntrks):
+        if idx + 8 > len(midi_bytes) or midi_bytes[idx:idx + 4] != b"MTrk":
+            break
+        track_len = struct.unpack(">I", midi_bytes[idx + 4:idx + 8])[0]
+        track_data = midi_bytes[idx + 8:idx + 8 + track_len]
+        idx += 8 + track_len
+
+        t_idx = 0
+        running_status = None
+        while t_idx < len(track_data):
+            _, t_idx = _read_vlq(track_data, t_idx)
+            if t_idx >= len(track_data):
+                break
+
+            status = track_data[t_idx]
+            if status < 0x80:
+                if running_status is None:
+                    break
+                status = running_status
+            else:
+                t_idx += 1
+                running_status = status if status < 0xF0 else running_status
+
+            if status == 0xFF:
+                if t_idx >= len(track_data):
+                    break
+                meta_type = track_data[t_idx]
+                t_idx += 1
+                meta_len, t_idx = _read_vlq(track_data, t_idx)
+                meta_data = track_data[t_idx:t_idx + meta_len]
+                t_idx += meta_len
+                if meta_type == 0x59 and len(meta_data) >= 2:
+                    sf = int(struct.unpack("b", bytes([meta_data[0]]))[0])
+                    mi = int(meta_data[1])
+                    key_name = (minor_keys if mi == 1 else major_keys).get(sf)
+                    if not key_name:
+                        return None
+                    root = _normalize_key_note_name(key_name)
+                    mode_name = "Aeolian / Minor" if mi == 1 else "Ionian / Major"
+                    if root in CHROMATIC_SHARPS:
+                        return root, mode_name
+                continue
+
+            if status in (0xF0, 0xF7):
+                syx_len, t_idx = _read_vlq(track_data, t_idx)
+                t_idx += syx_len
+                continue
+
+            msg_type = status & 0xF0
+            if msg_type in (0x80, 0x90, 0xA0, 0xB0, 0xE0):
+                t_idx += 2
+            elif msg_type in (0xC0, 0xD0):
+                t_idx += 1
+            else:
+                break
+
+    return None
+
+
+def infer_midi_key_from_events(midi_events: list[dict]) -> tuple[str, str] | None:
+    """Estimate key by maximizing pitch-class fit to major/minor templates."""
+    if not midi_events:
+        return None
+
+    counts = [0] * 12
+    for ev in midi_events:
+        counts[int(ev["midi"]) % 12] += 1
+
+    major_weights = {0: 2.0, 2: 1.2, 4: 1.8, 5: 1.0, 7: 1.6, 9: 1.1, 11: 0.9}
+    minor_weights = {0: 2.0, 2: 1.2, 3: 1.8, 5: 1.0, 7: 1.6, 8: 1.1, 10: 0.9}
+
+    best_score = -1.0
+    best_root = None
+    best_mode = None
+
+    for root in range(12):
+        major_score = sum(counts[(root + i) % 12] * w for i, w in major_weights.items())
+        minor_score = sum(counts[(root + i) % 12] * w for i, w in minor_weights.items())
+
+        if major_score > best_score:
+            best_score = major_score
+            best_root = root
+            best_mode = "Ionian / Major"
+        if minor_score > best_score:
+            best_score = minor_score
+            best_root = root
+            best_mode = "Aeolian / Minor"
+
+    if best_root is None or best_mode is None:
+        return None
+    return CHROMATIC_SHARPS[best_root], best_mode
+
+
+def detect_midi_channels(midi_events: list[dict]) -> list[int]:
+    """Return sorted MIDI channel numbers present in parsed events."""
+    channels = sorted({int(ev.get("channel", 0)) for ev in midi_events})
+    return [ch for ch in channels if 0 <= ch <= 15]
+
+
+def build_channel_color_map(channels: list[int]) -> dict[int, dict]:
+    """Assign deterministic colors to channels in order of appearance."""
+    mapping: dict[int, dict] = {}
+    for idx, ch in enumerate(sorted(set(int(c) for c in channels if 0 <= int(c) <= 15))):
+        name, hex_color = CHANNEL_COLOR_SEQUENCE[idx % len(CHANNEL_COLOR_SEQUENCE)]
+        mapping[int(ch)] = {"name": name, "hex": hex_color}
+    return mapping
+
+
+def detect_midi_scale_hint(midi_bytes: bytes, midi_events: list[dict]) -> tuple[str, str, str] | None:
+    """Return (root, mode, source) from MIDI key signature or inferred pitch profile."""
+    key_meta = extract_midi_key_signature(midi_bytes)
+    if key_meta:
+        return key_meta[0], key_meta[1], "MIDI key signature"
+
+    inferred = infer_midi_key_from_events(midi_events)
+    if inferred:
+        return inferred[0], inferred[1], "inferred from note profile"
+
+    return None
+
+
+def _fit_midi_to_fretboard_range(midi_num: int, tuning: list[tuple[str, int]], max_fret: int) -> int:
+    min_pitch = min(midi_for_string_fret(s, 0, tuning=tuning) for s in range(len(tuning)))
+    max_pitch = max(midi_for_string_fret(s, max_fret, tuning=tuning) for s in range(len(tuning)))
+    fitted = int(midi_num)
+    while fitted < min_pitch:
+        fitted += 12
+    while fitted > max_pitch:
+        fitted -= 12
+    return fitted
+
+
+def build_path_from_midi_events(
+    midi_events: list[dict],
+    tuning: list[tuple[str, int]],
+    max_fret: int,
+    max_notes: int | None = 80,
+) -> tuple[list[dict], list[float], list[dict]]:
+    """Map timed MIDI note-on events into display path, durations, and chord-aware playback events."""
+    if not midi_events:
+        return [], [], []
+
+    path = []
+    durations = []
+    playback_events = []
+    prev_string = len(tuning) - 1
+    prev_fret = 0
+
+    trimmed_source = midi_events if max_notes is None else midi_events[:max_notes]
+    trimmed = sorted(trimmed_source, key=lambda e: float(e["time"]))
+
+    # Group near-simultaneous note-ons into chord events.
+    grouped_events: list[dict] = []
+    time_epsilon = 0.0001
+    for ev in trimmed:
+        t = float(ev["time"])
+        m = int(ev["midi"])
+        ch = int(ev.get("channel", 0))
+        if not grouped_events or abs(t - float(grouped_events[-1]["time"])) > time_epsilon:
+            grouped_events.append({"time": t, "notes": [{"midi": m, "channel": ch}]})
+        else:
+            if not any(int(n.get("midi", -1)) == m and int(n.get("channel", -1)) == ch for n in grouped_events[-1]["notes"]):
+                grouped_events[-1]["notes"].append({"midi": m, "channel": ch})
+
+    for i, group in enumerate(grouped_events):
+        chord_raw_notes = [{"midi": int(n["midi"]), "channel": int(n.get("channel", 0))} for n in group["notes"]]
+        chord_raw_midis = [int(n["midi"]) for n in chord_raw_notes]
+        chord_display_midis = sorted({_fit_midi_to_fretboard_range(m, tuning, max_fret) for m in chord_raw_midis})
+        if not chord_display_midis:
+            continue
+
+        # Use the top pitch of each chord as a representative point for path display.
+        midi_num = int(max(chord_display_midis))
+        note = note_name_from_midi(midi_num)
+
+        candidates = []
+        for string_index in range(len(tuning)):
+            for fret in range(max_fret + 1):
+                if midi_for_string_fret(string_index, fret, tuning=tuning) == midi_num:
+                    candidates.append((string_index, fret))
+
+        if candidates:
+            string_index, fret = min(
+                candidates,
+                key=lambda x: abs(x[1] - prev_fret) * 3 + abs(x[0] - prev_string) * 2,
+            )
+        else:
+            string_index, fret = prev_string, max(0, min(max_fret, prev_fret))
+
+        prev_string, prev_fret = string_index, fret
+
+        next_time = grouped_events[i + 1]["time"] if i + 1 < len(grouped_events) else (group["time"] + 0.42)
+        duration = max(0.12, min(1.2, float(next_time - group["time"])))
+        durations.append(duration)
+
+        playback_events.append({
+            "idx": i,
+            # Preserve original MIDI pitches for accurate octave playback/highlighting.
+            "midis": sorted({int(m) for m in chord_raw_midis}),
+            "notes": chord_raw_notes,
+            "duration": float(duration),
+        })
+
+        path.append({
+            "string_index": int(string_index),
+            "fret": int(fret),
+            "note": note,
+            "pitch": int(midi_num),
+            "step": i + 1,
+        })
+
+    return path, durations, playback_events
 
 
 def _adsr_envelope(length: int, sample_rate: int, attack: float, decay: float, sustain: float, release: float) -> np.ndarray:
@@ -554,10 +1038,13 @@ def render_fretboard_svg(
     path_notes: list[dict],
     max_fret: int = 12,
     tuning: list[tuple[str, int]] = STANDARD_TUNING,
+    show_all_notes: bool = False,
+    overlay_pitch_classes: list[int] | None = None,
+    overlay_root_pc: int | None = None,
 ) -> str:
     """
-    Render the fretboard and show ONLY the single selected scale path.
-    No extra scale notes are displayed anywhere else.
+    Render the fretboard.
+    In MIDI mode, show all notes on the visible neck and highlight any played pitch.
     """
 
     width = 1180
@@ -578,7 +1065,7 @@ def render_fretboard_svg(
     svg_parts = []
 
     svg_parts.append(f"""
-    <svg width="100%" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">
+    <svg width="65%" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">
         <style>
             .bg {{
                 fill: #fbfbfb;
@@ -646,6 +1133,12 @@ def render_fretboard_svg(
                 fill: #dff1ff;
             }}
 
+            .all-note-circle {{
+                stroke: #1d4f73;
+                stroke-width: 1.5;
+                fill: #e2f0ff;
+            }}
+
             .start-circle {{
                 stroke: #12374f;
                 stroke-width: 2.8;
@@ -653,9 +1146,20 @@ def render_fretboard_svg(
             }}
 
             .active-note {{
-                fill: #ffe066 !important;
-                stroke: #b58900 !important;
+                fill: var(--active-fill, #ffe066) !important;
+                stroke: var(--active-stroke, #b58900) !important;
                 stroke-width: 3 !important;
+            }}
+
+            .scale-tone {{
+                fill: #c7f9cc;
+                stroke: #2b9348;
+            }}
+
+            .scale-root {{
+                fill: #80ed99;
+                stroke: #1b7f3a;
+                stroke-width: 2.4;
             }}
 
             .note-text {{
@@ -665,6 +1169,14 @@ def render_fretboard_svg(
                 text-anchor: middle;
                 dominant-baseline: middle;
                 fill: #111;
+            }}
+
+            .all-note-text {{
+                font-family: Arial, sans-serif;
+                font-size: 9px;
+                text-anchor: middle;
+                dominant-baseline: middle;
+                fill: #0f172a;
             }}
 
             .step-text {{
@@ -685,10 +1197,10 @@ def render_fretboard_svg(
         <rect class="bg" x="0" y="0" width="{width}" height="{height}" rx="12" />
 
         <text class="title" x="{left_margin}" y="34">
-            {html.escape(root)} {html.escape(mode_name)} scale path
+            {html.escape(root)} {html.escape(mode_name)} {'MIDI note map' if show_all_notes else 'scale path'}
         </text>
         <text class="subtitle" x="{left_margin}" y="55">
-            Starts on the low E string root and continues across all six strings.
+            {'All visible fretboard notes are shown; played MIDI notes light up wherever they appear.' if show_all_notes else 'Starts on the low E string root and continues across all six strings.'}
         </text>
     """)
 
@@ -738,61 +1250,88 @@ def render_fretboard_svg(
             f'<text class="fret-label" x="{x}" y="{height - 24}">{label}</text>'
         )
 
-    # Build coordinates for path notes
-    coords = []
-    for item in path_notes:
-        string_index = item["string_index"]
-        fret = item["fret"]
+    if show_all_notes:
+        for string_index in range(len(tuning)):
+            for fret in range(max_fret + 1):
+                midi_num = midi_for_string_fret(string_index, fret, tuning=tuning)
+                note = note_name_from_midi(midi_num)
+                y = top_margin + string_index * string_gap
+                x = left_margin if fret == 0 else left_margin + (fret - 0.5) * fret_gap
+                css_classes = ["all-note-circle"]
+                if overlay_pitch_classes and (midi_num % 12) in overlay_pitch_classes:
+                    css_classes.append("scale-tone")
+                if overlay_root_pc is not None and (midi_num % 12) == overlay_root_pc:
+                    css_classes.append("scale-root")
 
-        y = top_margin + string_index * string_gap
+                svg_parts.append(
+                    f'<circle data-midi="{midi_num}" class="{" ".join(css_classes)}" cx="{x}" cy="{y}" r="11" />'
+                )
+                svg_parts.append(
+                    f'<text class="all-note-text" x="{x}" y="{y + 0.5}">{html.escape(note_display_name(note))}</text>'
+                )
+    else:
+        # Build coordinates for path notes
+        coords = []
+        for item in path_notes:
+            string_index = item["string_index"]
+            fret = item["fret"]
 
-        if fret == 0:
-            x = left_margin
-        else:
-            x = left_margin + (fret - 0.5) * fret_gap
+            y = top_margin + string_index * string_gap
 
-        coords.append((x, y))
+            if fret == 0:
+                x = left_margin
+            else:
+                x = left_margin + (fret - 0.5) * fret_gap
 
-    # Draw a subtle line through the scale path
-    if len(coords) >= 2:
-        points = " ".join(f"{x},{y}" for x, y in coords)
-        svg_parts.append(f'<polyline class="path-line" points="{points}" />')
+            coords.append((x, y))
 
-    # Draw only the selected path notes
-    for note_idx, item in enumerate(path_notes):
-        string_index = item["string_index"]
-        fret = item["fret"]
-        note = item["note"]
-        step = item["step"]
+        # Draw a subtle line through the scale path
+        if len(coords) >= 2:
+            points = " ".join(f"{x},{y}" for x, y in coords)
+            svg_parts.append(f'<polyline class="path-line" points="{points}" />')
 
-        y = top_margin + string_index * string_gap
+        # Draw only the selected path notes
+        for note_idx, item in enumerate(path_notes):
+            string_index = item["string_index"]
+            fret = item["fret"]
+            note = item["note"]
+            step = item["step"]
+            midi_num = int(item["pitch"])
 
-        if fret == 0:
-            x = left_margin
-        else:
-            x = left_margin + (fret - 0.5) * fret_gap
+            y = top_margin + string_index * string_gap
 
-        circle_class = "start-circle" if step == 1 else "note-circle"
+            if fret == 0:
+                x = left_margin
+            else:
+                x = left_margin + (fret - 0.5) * fret_gap
 
-        svg_parts.append(
-            f'<circle id="note-node-{note_idx}" class="{circle_class}" cx="{x}" cy="{y}" r="18" />'
-        )
+            circle_class = "start-circle" if step == 1 else "note-circle"
 
-        svg_parts.append(
-            f'<text class="note-text" x="{x}" y="{y}">{html.escape(note)}</text>'
-        )
+            svg_parts.append(
+                f'<circle id="note-node-{note_idx}" data-note-idx="{note_idx}" data-midi="{midi_num}" class="{circle_class}" cx="{x}" cy="{y}" r="18" />'
+            )
 
-        svg_parts.append(
-            f'<text class="step-text" x="{x}" y="{y + 31}">{step}</text>'
-        )
+            svg_parts.append(
+                f'<text class="note-text" x="{x}" y="{y}">{html.escape(note)}</text>'
+            )
+
+            svg_parts.append(
+                f'<text class="step-text" x="{x}" y="{y + 31}">{step}</text>'
+            )
 
     svg_parts.append("</svg>")
 
     return "\n".join(svg_parts)
 
 
-def render_piano_keyboard_svg(path_notes: list[dict]) -> str:
-    """Render a piano keyboard view with per-step markers for synchronized highlighting."""
+def render_piano_keyboard_svg(
+    path_notes: list[dict],
+    show_all_notes: bool = False,
+    overlay_pitch_classes: list[int] | None = None,
+    overlay_root_pc: int | None = None,
+    keyboard_range_mode: str = "Full 88 Keys",
+) -> str:
+    """Render a piano keyboard view with either path markers or full-key MIDI highlighting."""
     if not path_notes:
         return "<div>No notes</div>"
 
@@ -804,11 +1343,15 @@ def render_piano_keyboard_svg(path_notes: list[dict]) -> str:
     keyboard_h = 210
     keyboard_w = width - left - right
 
-    min_midi = min(int(p["pitch"]) for p in path_notes)
-    max_midi = max(int(p["pitch"]) for p in path_notes)
-
-    start_midi = max(21, (min_midi // 12) * 12)
-    end_midi = min(108, ((max_midi // 12) + 1) * 12 + 11)
+    if keyboard_range_mode == "Auto-fit from notes":
+        min_midi = min(int(p["pitch"]) for p in path_notes)
+        max_midi = max(int(p["pitch"]) for p in path_notes)
+        start_midi = max(21, (min_midi // 12) * 12)
+        end_midi = min(108, ((max_midi // 12) + 1) * 12 + 11)
+    else:
+        # Full 88-key keyboard span (A0..C8).
+        start_midi = 21
+        end_midi = 108
 
     def _is_black(midi_num: int) -> bool:
         return note_name_from_midi(midi_num).endswith('#')
@@ -836,13 +1379,17 @@ def render_piano_keyboard_svg(path_notes: list[dict]) -> str:
             else:
                 key_center[m] = left
 
-        parts = [f"""
-    <svg width="100%" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">
+    parts = [f"""
+    <svg width="65%" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">
       <style>
         .title {{ font-family: Arial, sans-serif; font-size: 20px; font-weight: bold; fill: #111; }}
         .subtitle {{ font-family: Arial, sans-serif; font-size: 13px; fill: #475569; }}
         .white-key {{ fill: #ffffff; stroke: #2f2f2f; stroke-width: 1.2; }}
         .black-key {{ fill: #1f2937; stroke: #111827; stroke-width: 1; }}
+        .white-key.scale-tone {{ fill: #d8f3dc; stroke: #2b9348; }}
+        .black-key.scale-tone {{ fill: #2d6a4f; stroke: #1b4332; }}
+        .white-key.scale-root {{ fill: #95d5b2; stroke: #1b7f3a; stroke-width: 2; }}
+        .black-key.scale-root {{ fill: #40916c; stroke: #1b4332; stroke-width: 2; }}
         .marker {{ fill: #93c5fd; stroke: #1d4f73; stroke-width: 2; }}
                 .marker-white {{ fill: #93c5fd; stroke: #1d4f73; stroke-width: 2; }}
                 .marker-black {{ fill: #f8fafc; stroke: #1d4f73; stroke-width: 2; }}
@@ -850,48 +1397,66 @@ def render_piano_keyboard_svg(path_notes: list[dict]) -> str:
                 .marker-step-on-black {{ fill: #111; }}
                 .marker-note {{ font-family: Arial, sans-serif; font-size: 9px; text-anchor: middle; fill: #334155; }}
                 .black-key-label {{ font-family: Arial, sans-serif; font-size: 10px; text-anchor: middle; fill: #334155; }}
-        .active-note {{ fill: #ffe066 !important; stroke: #b58900 !important; stroke-width: 3 !important; }}
+        .active-note {{ fill: var(--active-fill, #ffe066) !important; stroke: var(--active-stroke, #b58900) !important; stroke-width: 3 !important; }}
       </style>
       <text class="title" x="{left}" y="30">Piano Keyboard View</text>
-            <text class="subtitle" x="{left}" y="48">Notes are mapped onto real key positions (including sharp/flat enharmonics).</text>
+            <text class="subtitle" x="{left}" y="48">{'All keys are active in MIDI mode; played notes light by pitch.' if show_all_notes else 'Notes are mapped onto real key positions (including sharp/flat enharmonics).'}</text>
     """]
 
     for m in white_midis:
         x = white_x[m]
-        parts.append(f'<rect class="white-key" x="{x}" y="{top}" width="{white_w}" height="{keyboard_h}" />')
+        key_classes = ["white-key"]
+        if overlay_pitch_classes and (m % 12) in overlay_pitch_classes:
+            key_classes.append("scale-tone")
+        if overlay_root_pc is not None and (m % 12) == overlay_root_pc:
+            key_classes.append("scale-root")
+        parts.append(f'<rect class="{" ".join(key_classes)}" data-midi="{m}" x="{x}" y="{top}" width="{white_w}" height="{keyboard_h}" />')
 
     for m in range(start_midi, end_midi + 1):
         if not _is_black(m):
             continue
         cx = key_center[m]
-        parts.append(f'<rect class="black-key" x="{cx - black_w/2}" y="{top}" width="{black_w}" height="{black_h}" />')
+        key_classes = ["black-key"]
+        if overlay_pitch_classes and (m % 12) in overlay_pitch_classes:
+            key_classes.append("scale-tone")
+        if overlay_root_pc is not None and (m % 12) == overlay_root_pc:
+            key_classes.append("scale-root")
+        parts.append(f'<rect class="{" ".join(key_classes)}" data-midi="{m}" x="{cx - black_w/2}" y="{top}" width="{black_w}" height="{black_h}" />')
         parts.append(
             f'<text class="black-key-label" x="{cx}" y="{top - 8}">{html.escape(note_display_name(note_name_from_midi(m)))}</text>'
         )
 
-    for idx, item in enumerate(path_notes):
-        midi_num = int(item["pitch"])
-        cx = key_center.get(midi_num, left)
-        note = str(item.get("note", ""))
-        step = int(item.get("step", idx + 1))
-        is_black_note = _is_black(midi_num)
-        marker_y = top + (black_h * 0.58 if is_black_note else keyboard_h * 0.74)
-        marker_r = 12 if is_black_note else 14
-        marker_class = "marker-black" if is_black_note else "marker-white"
-        step_class = "marker-step marker-step-on-black" if is_black_note else "marker-step"
+    if not show_all_notes:
+        for idx, item in enumerate(path_notes):
+            midi_num = int(item["pitch"])
+            cx = key_center.get(midi_num, left)
+            note = str(item.get("note", ""))
+            step = int(item.get("step", idx + 1))
+            is_black_note = _is_black(midi_num)
+            marker_y = top + (black_h * 0.58 if is_black_note else keyboard_h * 0.74)
+            marker_r = 12 if is_black_note else 14
+            marker_class = "marker-black" if is_black_note else "marker-white"
+            step_class = "marker-step marker-step-on-black" if is_black_note else "marker-step"
 
-        parts.append(f'<circle id="note-node-{idx}" class="{marker_class}" cx="{cx}" cy="{marker_y}" r="{marker_r}" />')
-        parts.append(f'<text class="{step_class}" x="{cx}" y="{marker_y + 3}">{step}</text>')
-        parts.append(
-            f'<text class="marker-note" x="{cx}" y="{marker_y + marker_r + 11}">{html.escape(note_display_name(note))}</text>'
-        )
+            parts.append(f'<circle id="note-node-{idx}" data-note-idx="{idx}" data-midi="{midi_num}" class="{marker_class}" cx="{cx}" cy="{marker_y}" r="{marker_r}" />')
+            parts.append(f'<text class="{step_class}" x="{cx}" y="{marker_y + 3}">{step}</text>')
+            parts.append(
+                f'<text class="marker-note" x="{cx}" y="{marker_y + marker_r + 11}">{html.escape(note_display_name(note))}</text>'
+            )
 
     parts.append('</svg>')
     return "\n".join(parts)
 
 
-def render_mallet_bars_svg(path_notes: list[dict]) -> str:
-    """Render an instrument-style mallet bar view for the same path notes."""
+def render_mallet_bars_svg(
+    path_notes: list[dict],
+    max_fret: int = 12,
+    tuning: list[tuple[str, int]] = STANDARD_TUNING,
+    show_all_notes: bool = False,
+    overlay_pitch_classes: list[int] | None = None,
+    overlay_root_pc: int | None = None,
+) -> str:
+    """Render a mallet-style view for path notes or full visible chromatic note map."""
     if not path_notes:
         return "<div>No notes</div>"
 
@@ -901,46 +1466,93 @@ def render_mallet_bars_svg(path_notes: list[dict]) -> str:
     top = 70
     bar_h = 54
     gap = 10
-    bar_w = (width - (left * 2) - (len(path_notes) - 1) * gap) / max(1, len(path_notes))
+    render_items = []
+    if show_all_notes:
+        min_pitch = min(midi_for_string_fret(s, 0, tuning=tuning) for s in range(len(tuning)))
+        max_pitch = max(midi_for_string_fret(s, max_fret, tuning=tuning) for s in range(len(tuning)))
+        for midi_num in range(min_pitch, max_pitch + 1):
+            render_items.append({
+                "pitch": int(midi_num),
+                "note": note_name_from_midi(midi_num),
+                "step": int(midi_num),
+            })
+    else:
+        render_items = list(path_notes)
+
+    bar_w = (width - (left * 2) - (len(render_items) - 1) * gap) / max(1, len(render_items))
 
     parts = [f"""
-    <svg width="100%" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">
+    <svg width="65%" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">
       <style>
         .title {{ font-family: Arial, sans-serif; font-size: 20px; font-weight: bold; fill: #111; }}
         .subtitle {{ font-family: Arial, sans-serif; font-size: 13px; fill: #475569; }}
         .bar {{ fill: #93c5fd; stroke: #1d4f73; stroke-width: 2; rx: 8; }}
+        .bar.scale-tone {{ fill: #c7f9cc; stroke: #2b9348; }}
+        .bar.scale-root {{ fill: #80ed99; stroke: #1b7f3a; stroke-width: 2.4; }}
         .bar-step {{ font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; text-anchor: middle; fill: #0f172a; }}
         .bar-note {{ font-family: Arial, sans-serif; font-size: 12px; text-anchor: middle; fill: #334155; }}
-        .active-note {{ fill: #ffe066 !important; stroke: #b58900 !important; stroke-width: 3 !important; }}
+        .active-note {{ fill: var(--active-fill, #ffe066) !important; stroke: var(--active-stroke, #b58900) !important; stroke-width: 3 !important; }}
       </style>
       <text class="title" x="{left}" y="30">Mallet Bars View</text>
-      <text class="subtitle" x="{left}" y="48">Pluggable alternative instrument-style visualization.</text>
+            <text class="subtitle" x="{left}" y="48">{'All visible chromatic notes are shown in MIDI mode.' if show_all_notes else 'Pluggable alternative instrument-style visualization.'}</text>
     """]
 
-    for idx, item in enumerate(path_notes):
+    for idx, item in enumerate(render_items):
         x = left + idx * (bar_w + gap)
         y = top + ((idx % 2) * 10)
+        midi_num = int(item.get("pitch", 0))
         note = str(item.get("note", ""))
         step = int(item.get("step", idx + 1))
-        parts.append(f'<rect id="note-node-{idx}" class="bar" x="{x}" y="{y}" width="{bar_w}" height="{bar_h}" rx="8" />')
-        parts.append(f'<text class="bar-step" x="{x + bar_w/2}" y="{y + 24}">{step}</text>')
-        parts.append(f'<text class="bar-note" x="{x + bar_w/2}" y="{y + 42}">{html.escape(note)}</text>')
+        node_id = f' id="note-node-{idx}" data-note-idx="{idx}"' if not show_all_notes else ""
+        bar_classes = ["bar"]
+        if overlay_pitch_classes and (midi_num % 12) in overlay_pitch_classes:
+            bar_classes.append("scale-tone")
+        if overlay_root_pc is not None and (midi_num % 12) == overlay_root_pc:
+            bar_classes.append("scale-root")
+        parts.append(f'<rect{node_id} data-midi="{midi_num}" class="{" ".join(bar_classes)}" x="{x}" y="{y}" width="{bar_w}" height="{bar_h}" rx="8" />')
+        parts.append(f'<text class="bar-step" x="{x + bar_w/2}" y="{y + 24}">{step if not show_all_notes else html.escape(note_display_name(note))}</text>')
+        parts.append(f'<text class="bar-note" x="{x + bar_w/2}" y="{y + 42}">{html.escape(note_display_name(note))}</text>')
 
     parts.append('</svg>')
     return "\n".join(parts)
 
 
 VIEW_RENDERERS = {
-    "Guitar Neck": render_fretboard_svg,
-    "Bass Guitar Neck": lambda root, mode_name, path_notes, max_fret: render_fretboard_svg(
+    "Guitar Neck": lambda root, mode_name, path_notes, max_fret, show_all_notes=False, tuning=STANDARD_TUNING, overlay_pitch_classes=None, overlay_root_pc=None, keyboard_range_mode="Full 88 Keys": render_fretboard_svg(
+        root,
+        mode_name,
+        path_notes,
+        max_fret=max_fret,
+        tuning=STANDARD_TUNING,
+        show_all_notes=show_all_notes,
+        overlay_pitch_classes=overlay_pitch_classes,
+        overlay_root_pc=overlay_root_pc,
+    ),
+    "Bass Guitar Neck": lambda root, mode_name, path_notes, max_fret, show_all_notes=False, tuning=STANDARD_TUNING, overlay_pitch_classes=None, overlay_root_pc=None, keyboard_range_mode="Full 88 Keys": render_fretboard_svg(
         root,
         mode_name,
         path_notes,
         max_fret=max_fret,
         tuning=BASS_TUNING,
+        show_all_notes=show_all_notes,
+        overlay_pitch_classes=overlay_pitch_classes,
+        overlay_root_pc=overlay_root_pc,
     ),
-    "Piano Keyboard": lambda root, mode_name, path_notes, max_fret: render_piano_keyboard_svg(path_notes),
-    "Mallet Bars": lambda root, mode_name, path_notes, max_fret: render_mallet_bars_svg(path_notes),
+    "Piano Keyboard": lambda root, mode_name, path_notes, max_fret, show_all_notes=False, tuning=STANDARD_TUNING, overlay_pitch_classes=None, overlay_root_pc=None, keyboard_range_mode="Full 88 Keys": render_piano_keyboard_svg(
+        path_notes,
+        show_all_notes=show_all_notes,
+        overlay_pitch_classes=overlay_pitch_classes,
+        overlay_root_pc=overlay_root_pc,
+        keyboard_range_mode=keyboard_range_mode,
+    ),
+    "Mallet Bars": lambda root, mode_name, path_notes, max_fret, show_all_notes=False, tuning=STANDARD_TUNING, overlay_pitch_classes=None, overlay_root_pc=None, keyboard_range_mode="Full 88 Keys": render_mallet_bars_svg(
+        path_notes,
+        max_fret=max_fret,
+        tuning=tuning,
+        show_all_notes=show_all_notes,
+        overlay_pitch_classes=overlay_pitch_classes,
+        overlay_root_pc=overlay_root_pc,
+    ),
 }
 
 
@@ -951,33 +1563,100 @@ def render_synced_player_html(
     max_fret: int,
     seconds_per_note: float,
     audio_engine: str,
-    web_sample_source: str,
+    web_sample_sources: list[str],
     sound_preset: str,
     view_mode: str,
+    note_durations: list[float] | None = None,
+    play_all_nonce: int = 0,
+    show_all_notes: bool = False,
+    tuning: list[tuple[str, int]] = STANDARD_TUNING,
+    overlay_scale_notes: list[str] | None = None,
+    overlay_root_note: str | None = None,
+    playback_events: list[dict] | None = None,
+    keyboard_range_mode: str = "Full 88 Keys",
+    channel_instrument_map: dict[int, str] | None = None,
+    channel_color_map: dict[int, dict] | None = None,
 ) -> str:
     """Render selected instrument view with an in-browser synced player."""
     renderer = VIEW_RENDERERS.get(view_mode, render_fretboard_svg)
-    svg_markup = renderer(root, mode_name, path_notes, max_fret)
+    overlay_pcs = [note_index(n) for n in (overlay_scale_notes or []) if n in CHROMATIC_SHARPS]
+    overlay_root_pc = note_index(overlay_root_note) if overlay_root_note in CHROMATIC_SHARPS else None
+    svg_markup = renderer(
+        root,
+        mode_name,
+        path_notes,
+        max_fret,
+        show_all_notes=show_all_notes,
+        tuning=tuning,
+        overlay_pitch_classes=overlay_pcs,
+        overlay_root_pc=overlay_root_pc,
+        keyboard_range_mode=keyboard_range_mode,
+    )
 
     note_events = []
-    for idx, item in enumerate(path_notes):
-        note_events.append({
-            "idx": idx,
-            "midi": int(item["pitch"]),
-            "label": str(item["note"]),
-            "string": int(item["string_index"]),
-            "fret": int(item["fret"]),
+    if playback_events:
+        for idx, ev in enumerate(playback_events):
+            midis = [int(m) for m in ev.get("midis", [])]
+            notes = [
+                {
+                    "midi": int(n.get("midi", 0)),
+                    "channel": int(n.get("channel", 0)),
+                }
+                for n in ev.get("notes", [])
+                if isinstance(n, dict) and n.get("midi") is not None
+            ]
+            if not midis:
+                continue
+            note_events.append({
+                "idx": idx,
+                "midis": midis,
+                "notes": notes if notes else [{"midi": int(m), "channel": 0} for m in midis],
+                "midi": int(max(midis)),
+                "duration": float(ev.get("duration", 0.0) or 0.0),
+            })
+    else:
+        for idx, item in enumerate(path_notes):
+            note_events.append({
+                "idx": idx,
+                "midis": [int(item["pitch"])],
+                "notes": [{"midi": int(item["pitch"]), "channel": 0}],
+                "midi": int(item["pitch"]),
+                "duration": 0.0,
+                "label": str(item["note"]),
+                "string": int(item["string_index"]),
+                "fret": int(item["fret"]),
+            })
+
+    selected_sources_meta = []
+    for source_name in (web_sample_sources or []):
+        source_meta = WEB_SAMPLE_SOURCES.get(source_name)
+        if not source_meta:
+            continue
+        selected_sources_meta.append({
+            "name": str(source_name),
+            "url": str(source_meta.get("url", "")),
+            "base_midi": int(source_meta.get("base_midi", 60)),
         })
 
-    source_meta = WEB_SAMPLE_SOURCES.get(web_sample_source, {})
-    sample_url = str(source_meta.get("url", ""))
-    sample_base_midi = int(source_meta.get("base_midi", 60))
+    if not selected_sources_meta and WEB_SAMPLE_SOURCES:
+        first_name = next(iter(WEB_SAMPLE_SOURCES.keys()))
+        first_meta = WEB_SAMPLE_SOURCES[first_name]
+        selected_sources_meta.append({
+            "name": str(first_name),
+            "url": str(first_meta.get("url", "")),
+            "base_midi": int(first_meta.get("base_midi", 60)),
+        })
+
     synth_preset = str(sound_preset or "Clean Guitar")
 
     note_events_json = json.dumps(note_events)
-    sample_url_json = json.dumps(sample_url)
+    sample_sources_json = json.dumps(selected_sources_meta)
+    channel_instrument_map_json = json.dumps({str(int(k)): str(v) for k, v in (channel_instrument_map or {}).items()})
+    channel_color_map_json = json.dumps({str(int(k)): v for k, v in (channel_color_map or {}).items()})
     audio_engine_json = json.dumps(audio_engine)
     synth_preset_json = json.dumps(synth_preset)
+    note_durations_json = json.dumps([float(x) for x in (note_durations or [])])
+    play_all_nonce = int(play_all_nonce or 0)
 
     return f"""
 <div style="border:1px solid #e5e7eb;border-radius:12px;padding:10px;background:#ffffff;">
@@ -993,9 +1672,12 @@ def render_synced_player_html(
     const noteEvents = {note_events_json};
     const secondsPerNote = {float(seconds_per_note)};
     const audioEngine = {audio_engine_json};
-    const sampleUrl = {sample_url_json};
-    const sampleBaseMidi = {sample_base_midi};
+    const sampleSources = {sample_sources_json};
+    const channelInstrumentMap = {channel_instrument_map_json};
+    const channelColorMap = {channel_color_map_json};
     const synthPreset = {synth_preset_json};
+    const noteDurations = {note_durations_json};
+    const playAllNonce = {play_all_nonce};
     const noteTailFactor = 1.35;
 
     const playBtn = document.getElementById('play-sync-scale');
@@ -1003,9 +1685,10 @@ def render_synced_player_html(
     const statusEl = document.getElementById('sync-status');
 
     let audioCtx = null;
-    let sampleBuffer = null;
+    const sampleBufferMap = new Map();
     let stopRequested = false;
-    let activeSource = null;
+    let activeSources = [];
+    let lastPlayedMidis = [];
 
     function setStatus(msg) {{
         if (statusEl) statusEl.textContent = msg;
@@ -1022,17 +1705,55 @@ def render_synced_player_html(
 
     async function ensureSampleBuffer() {{
         if (audioEngine !== 'Public Web Samples') return;
-        if (sampleBuffer || !sampleUrl) return;
-        const resp = await fetch(sampleUrl, {{ cache: 'force-cache' }});
-        if (!resp.ok) throw new Error('Sample fetch failed: ' + resp.status);
-        const arr = await resp.arrayBuffer();
-        sampleBuffer = await audioCtx.decodeAudioData(arr.slice(0));
+        for (const srcMeta of sampleSources) {{
+            if (!srcMeta || !srcMeta.name || !srcMeta.url) continue;
+            if (sampleBufferMap.has(srcMeta.name)) continue;
+            const resp = await fetch(srcMeta.url, {{ cache: 'force-cache' }});
+            if (!resp.ok) throw new Error('Sample fetch failed: ' + resp.status + ' for ' + srcMeta.name);
+            const arr = await resp.arrayBuffer();
+            const decoded = await audioCtx.decodeAudioData(arr.slice(0));
+            sampleBufferMap.set(srcMeta.name, decoded);
+        }}
+    }}
+
+    function getNoteElementsForEvent(ev) {{
+        const midiSet = new Set();
+        const ids = Array.isArray(ev.midis) && ev.midis.length ? ev.midis : [ev.midi];
+        for (const midi of ids) {{
+            Array.from(document.querySelectorAll(`[data-midi="${{midi}}"]`)).forEach((el) => midiSet.add(el));
+        }}
+        if (midiSet.size > 0) return Array.from(midiSet);
+        return Array.from(document.querySelectorAll(`[data-note-idx="${{ev.idx}}"], #note-node-${{ev.idx}}`));
+    }}
+
+    function getNoteElementsForMidis(midis, fallbackIdx) {{
+        const midiSet = new Set();
+        const ids = Array.isArray(midis) && midis.length ? midis : [];
+        for (const midi of ids) {{
+            Array.from(document.querySelectorAll(`[data-midi="${{midi}}"]`)).forEach((el) => midiSet.add(el));
+        }}
+        if (midiSet.size > 0) return Array.from(midiSet);
+        if (fallbackIdx === undefined || fallbackIdx === null) return [];
+        return Array.from(document.querySelectorAll(`[data-note-idx="${{fallbackIdx}}"], #note-node-${{fallbackIdx}}`));
+    }}
+
+    function isChannelOff(channel) {{
+        if (!channelInstrumentMap) return false;
+        const mapped = channelInstrumentMap[String(channel)];
+        return typeof mapped === 'string' && mapped.toLowerCase() === 'off';
+    }}
+
+    function getChannelColor(channel) {{
+        const entry = channelColorMap && channelColorMap[String(channel)];
+        if (entry && entry.hex) return String(entry.hex);
+        return '#ffe066';
     }}
 
     function clearHighlights() {{
-        noteEvents.forEach((ev) => {{
-            const el = document.getElementById(`note-node-${{ev.idx}}`);
-            if (el) el.classList.remove('active-note');
+        document.querySelectorAll('.active-note').forEach((el) => {{
+            el.classList.remove('active-note');
+            el.style.removeProperty('--active-fill');
+            el.style.removeProperty('--active-stroke');
         }});
     }}
 
@@ -1040,53 +1761,107 @@ def render_synced_player_html(
         return new Promise((resolve) => setTimeout(resolve, ms));
     }}
 
-    async function playWebSample(midi, durationSec) {{
-        const audibleSec = Math.max(0.06, durationSec * noteTailFactor);
-        const gain = audioCtx.createGain();
-        gain.gain.setValueAtTime(0.0, audioCtx.currentTime);
-        gain.gain.linearRampToValueAtTime(0.95, audioCtx.currentTime + 0.01);
-        gain.gain.setTargetAtTime(0.95, audioCtx.currentTime + 0.02, 0.08);
-        gain.gain.setTargetAtTime(0.001, audioCtx.currentTime + Math.max(0.05, durationSec * 0.95), 0.22);
-        gain.connect(audioCtx.destination);
+    function getSampleSourceForChannel(channel) {{
+        const desired = channelInstrumentMap && Object.prototype.hasOwnProperty.call(channelInstrumentMap, String(channel))
+            ? String(channelInstrumentMap[String(channel)])
+            : '';
+        if (desired.toLowerCase() === 'off') {{
+            return [];
+        }}
+        if (desired) {{
+            const match = sampleSources.find((s) => s && s.name === desired);
+            if (match) return [match];
+        }}
+        return sampleSources;
+    }}
 
-        const src = audioCtx.createBufferSource();
-        src.buffer = sampleBuffer;
-        src.playbackRate.value = Math.pow(2, (midi - sampleBaseMidi) / 12);
-        src.connect(gain);
-        activeSource = src;
-        src.start();
-        src.stop(audioCtx.currentTime + audibleSec);
+    async function playWebSamples(notePayload, durationSec) {{
+        const audibleSec = Math.max(0.06, durationSec * noteTailFactor);
+        const notes = Array.isArray(notePayload) && notePayload.length
+            ? notePayload
+            : [{{ midi: Number(notePayload), channel: 0 }}];
+        const voiceCount = Math.max(1, notes.length * Math.max(1, sampleSources.length));
+        const perVoiceGain = Math.min(0.8, 1.1 / voiceCount);
+
+        for (const noteItem of notes) {{
+            const midi = Number(noteItem.midi);
+            const channel = Number(noteItem.channel ?? 0);
+            const targetSources = getSampleSourceForChannel(channel);
+            for (const srcMeta of targetSources) {{
+                const buffer = sampleBufferMap.get(srcMeta.name);
+                if (!buffer) continue;
+
+                const gain = audioCtx.createGain();
+                gain.gain.setValueAtTime(0.0, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(perVoiceGain, audioCtx.currentTime + 0.01);
+                gain.gain.setTargetAtTime(perVoiceGain, audioCtx.currentTime + 0.02, 0.08);
+                gain.gain.setTargetAtTime(0.001, audioCtx.currentTime + Math.max(0.05, durationSec * 0.95), 0.22);
+                gain.connect(audioCtx.destination);
+
+                const src = audioCtx.createBufferSource();
+                src.buffer = buffer;
+                src.playbackRate.value = Math.pow(2, (Number(midi) - Number(srcMeta.base_midi || 60)) / 12);
+                src.connect(gain);
+                activeSources.push(src);
+                src.start();
+                src.stop(audioCtx.currentTime + audibleSec);
+            }}
+        }}
+
         await sleep(durationSec * 1000);
     }}
 
-    async function playSynth(midi, durationSec) {{
+    async function playSynth(midis, durationSec) {{
         const audibleSec = Math.max(0.06, durationSec * noteTailFactor);
-        const freq = 440 * Math.pow(2, (midi - 69) / 12);
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
+        const notes = Array.isArray(midis) && midis.length ? midis : [{{ midi: Number(midis), channel: 0 }}];
+        const perVoiceGain = Math.min(0.82, 1.0 / Math.max(1, notes.length));
         const waveByPreset = {{
             'Studio Sine': 'sine',
             'Clean Guitar': 'triangle',
             'Warm Lead': 'sawtooth',
             'Glass Bell': 'sine',
         }};
-        osc.type = waveByPreset[synthPreset] || 'triangle';
-        osc.frequency.value = freq;
-        gain.gain.setValueAtTime(0.0, audioCtx.currentTime);
-        gain.gain.linearRampToValueAtTime(0.82, audioCtx.currentTime + 0.012);
-        gain.gain.setTargetAtTime(0.82, audioCtx.currentTime + 0.02, 0.07);
-        gain.gain.setTargetAtTime(0.001, audioCtx.currentTime + Math.max(0.05, durationSec * 0.95), 0.25);
-        osc.connect(gain).connect(audioCtx.destination);
-        activeSource = osc;
-        osc.start();
-        osc.stop(audioCtx.currentTime + audibleSec);
+        for (const noteItem of notes) {{
+            const midi = Number(noteItem.midi);
+            const freq = 440 * Math.pow(2, (midi - 69) / 12);
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = waveByPreset[synthPreset] || 'triangle';
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0.0, audioCtx.currentTime);
+            gain.gain.linearRampToValueAtTime(perVoiceGain, audioCtx.currentTime + 0.012);
+            gain.gain.setTargetAtTime(perVoiceGain, audioCtx.currentTime + 0.02, 0.07);
+            gain.gain.setTargetAtTime(0.001, audioCtx.currentTime + Math.max(0.05, durationSec * 0.95), 0.25);
+            osc.connect(gain).connect(audioCtx.destination);
+            activeSources.push(osc);
+            osc.start();
+            osc.stop(audioCtx.currentTime + audibleSec);
+        }}
         await sleep(durationSec * 1000);
+    }}
+
+    function applyChannelHighlights(activeNotes, fallbackIdx) {{
+        const seen = new Set();
+        for (const noteItem of activeNotes) {{
+            const midiNum = Number(noteItem.midi);
+            const channel = Number(noteItem.channel ?? 0);
+            const color = getChannelColor(channel);
+            const els = getNoteElementsForMidis([midiNum], fallbackIdx);
+            for (const el of els) {{
+                if (seen.has(el)) continue;
+                seen.add(el);
+                el.style.setProperty('--active-fill', color);
+                el.style.setProperty('--active-stroke', '#1f2937');
+                el.classList.add('active-note');
+            }}
+        }}
     }}
 
     async function playSequence() {{
         if (!noteEvents.length) return;
         stopRequested = false;
         clearHighlights();
+        lastPlayedMidis = [];
 
         try {{
             await ensureAudioContext();
@@ -1101,21 +1876,42 @@ def render_synced_player_html(
 
         for (const ev of noteEvents) {{
             if (stopRequested) break;
+            activeSources = [];
             clearHighlights();
-            const el = document.getElementById(`note-node-${{ev.idx}}`);
-            if (el) el.classList.add('active-note');
+            const noteDuration = Number(ev.duration || noteDurations[ev.idx] || secondsPerNote);
+            const chordMidis = Array.isArray(ev.midis) && ev.midis.length ? ev.midis : [ev.midi];
+            const notePayload = Array.isArray(ev.notes) && ev.notes.length
+                ? ev.notes.map((n) => ({{ midi: Number(n.midi), channel: Number(n.channel ?? 0) }}))
+                : chordMidis.map((m) => ({{ midi: Number(m), channel: 0 }}));
 
-            try {{
-                if (audioEngine === 'Public Web Samples' && sampleBuffer) {{
-                    await playWebSample(ev.midi, secondsPerNote);
-                }} else {{
-                    await playSynth(ev.midi, secondsPerNote);
-                }}
-            }} catch (err) {{
-                await playSynth(ev.midi, secondsPerNote);
+            const activeNotes = notePayload.filter((n) => !isChannelOff(Number(n.channel ?? 0)));
+            const activeMidis = Array.from(new Set(activeNotes.map((n) => Number(n.midi))));
+            if (!activeNotes.length) {{
+                await sleep(noteDuration * 1000);
+                lastPlayedMidis = [];
+                continue;
             }}
 
-            if (el) el.classList.remove('active-note');
+            const hasReplayPitch = activeMidis.some((m) => lastPlayedMidis.includes(m));
+            if (hasReplayPitch) {{
+                // Force a visible blink when a pitch is replayed in consecutive events.
+                await sleep(28);
+            }}
+
+            applyChannelHighlights(activeNotes, ev.idx);
+
+            try {{
+                if (audioEngine === 'Public Web Samples' && sampleBufferMap.size) {{
+                    await playWebSamples(activeNotes, noteDuration);
+                }} else {{
+                    await playSynth(activeNotes, noteDuration);
+                }}
+            }} catch (err) {{
+                await playSynth(activeNotes, noteDuration);
+            }}
+
+            clearHighlights();
+            lastPlayedMidis = activeMidis;
         }}
 
         clearHighlights();
@@ -1129,13 +1925,21 @@ def render_synced_player_html(
 
     stopBtn.addEventListener('click', () => {{
         stopRequested = true;
-        if (activeSource) {{
-            try {{ activeSource.stop(); }} catch (_) {{}}
-        }}
+        activeSources.forEach((src) => {{
+            try {{ src.stop(); }} catch (_) {{}}
+        }});
+        activeSources = [];
         clearHighlights();
         playBtn.disabled = false;
         setStatus('Stopped');
     }});
+
+    // One-shot auto-trigger used by the page-level "Play All" button.
+    if (playAllNonce > 0) {{
+        setTimeout(() => {{
+            if (!playBtn.disabled) playSequence();
+        }}, 120);
+    }}
 }})();
 </script>
 """
@@ -1151,10 +1955,56 @@ st.set_page_config(
     layout="wide"
 )
 
+authenticator = StreamlitHybridAuth()
+
+if not authenticator.is_authenticated():
+    st.warning("🔐 Please sign in to access Guitar Mode Finder.")
+    if not authenticator.render(show_signup=False):
+        st.stop()
+
+username = str(authenticator.get_username() or '').strip()
+allowed = username.lower() == 'root' or 'leyden' in username.lower()
+
+if not allowed:
+    st.error("⛔ Access denied.")
+    st.info("This page is limited to root and usernames containing 'leyden'.")
+    if st.button("🚪 Log out"):
+        authenticator.logout()
+        st.rerun()
+    st.stop()
+
 st.title("🎸 Guitar Mode Finder")
 st.caption(
     "Shows one ascending scale path across all six strings, starting from the root on the low E string."
 )
+
+# Apply any queued widget updates before keyed widgets are instantiated.
+pending_widget_updates = st.session_state.pop("midi_pending_widget_updates", None)
+if isinstance(pending_widget_updates, dict):
+    for k, v in pending_widget_updates.items():
+        st.session_state[k] = v
+
+# Pre-widget defaults for keyed controls.
+if "root_note" not in st.session_state:
+    st.session_state["root_note"] = CHROMATIC_SHARPS[0]
+if "scale_kind" not in st.session_state:
+    st.session_state["scale_kind"] = list(SCALE_LIBRARY.keys())[0]
+if "mode_name" not in st.session_state:
+    st.session_state["mode_name"] = list(SCALE_LIBRARY[st.session_state["scale_kind"]].keys())[0]
+if "playback_source" not in st.session_state:
+    st.session_state["playback_source"] = "Scale path"
+if "midi_source_name" not in st.session_state:
+    st.session_state["midi_source_name"] = list(PUBLIC_MIDI_SOURCES.keys())[0]
+if "midi_max_notes" not in st.session_state:
+    st.session_state["midi_max_notes"] = 90
+if "midi_unlimited_notes" not in st.session_state:
+    st.session_state["midi_unlimited_notes"] = False
+if "max_fret_value" not in st.session_state:
+    st.session_state["max_fret_value"] = 12
+if "view_modes" not in st.session_state:
+    st.session_state["view_modes"] = ["Guitar Neck"]
+if "keyboard_range_mode" not in st.session_state:
+    st.session_state["keyboard_range_mode"] = "Full 88 Keys"
 
 with st.sidebar:
     st.header("Selection")
@@ -1162,13 +2012,15 @@ with st.sidebar:
     root = st.selectbox(
         "Root note",
         CHROMATIC_SHARPS,
-        index=0
+        index=0,
+        key="root_note",
     )
 
     scale_kind = st.selectbox(
         "Scale family",
         list(SCALE_LIBRARY.keys()),
         index=0,
+        key="scale_kind",
         help="Pick the kind of scale first, then choose a specific scale or mode.",
     )
 
@@ -1176,13 +2028,59 @@ with st.sidebar:
         "Scale / mode",
         list(SCALE_LIBRARY[scale_kind].keys()),
         index=0,
+        key="mode_name",
+    )
+
+    playback_source = st.selectbox(
+        "Playback source",
+        ["Scale path", "Public MIDI"],
+        index=0,
+        key="playback_source",
+        help="Choose generated scale playback, or play a public MIDI note sequence through the same views.",
+    )
+
+    midi_source_name = st.selectbox(
+        "Public MIDI",
+        list(PUBLIC_MIDI_SOURCES.keys()),
+        index=0,
+        key="midi_source_name",
+        disabled=playback_source != "Public MIDI",
+    )
+
+    midi_max_notes = st.slider(
+        "MIDI note limit",
+        min_value=16,
+        max_value=220,
+        value=90,
+        key="midi_max_notes",
+        step=2,
+        disabled=playback_source != "Public MIDI" or bool(st.session_state.get("midi_unlimited_notes", False)),
+        help="Limits rendered/played note-on events to keep visualization responsive.",
+    )
+
+    midi_unlimited_notes = st.checkbox(
+        "Unlimited MIDI notes",
+        key="midi_unlimited_notes",
+        disabled=playback_source != "Public MIDI",
+        help="Parses all note-on events from the MIDI file. This can be slower on long songs.",
+    )
+
+    midi_speed = st.slider(
+        "MIDI speed",
+        min_value=0.25,
+        max_value=2.00,
+        value=1.00,
+        step=0.05,
+        disabled=playback_source != "Public MIDI",
+        help="MIDI tempo multiplier. 1.00 = original, 2.00 = twice as fast, 0.50 = half speed.",
     )
 
     max_fret = st.slider(
-        "Frets to show",
+        "Frets/Keys",
         min_value=5,
         max_value=24,
         value=12,
+        key="max_fret_value",
         step=1
     )
 
@@ -1210,11 +2108,17 @@ with st.sidebar:
         help="Use internet-hosted free instrument samples, or fallback to local synthesis.",
     )
 
-    web_sample_source = st.selectbox(
-        "Web instrument",
+    web_sample_sources = st.multiselect(
+        "Web instruments",
         list(WEB_SAMPLE_SOURCES.keys()),
-        index=0,
+        default=[
+            "Guitar Acoustic (A2 sample)",
+            "Piano (C4 sample)",
+            "Bass Electric (E1 sample)",
+            "Blocks (Xylophone C5 sample)",
+        ],
         disabled=audio_engine != "Public Web Samples",
+        help="Select one or more web instruments to layer together. Selected instruments play simultaneously for each note.",
     )
 
     sound_preset = st.selectbox(
@@ -1225,11 +2129,20 @@ with st.sidebar:
         disabled=audio_engine != "Built-in Synth",
     )
 
-    view_mode = st.selectbox(
-        "Instrument view",
+    view_modes = st.multiselect(
+        "Instrument views",
         list(VIEW_RENDERERS.keys()),
+        default=["Guitar Neck"],
+        key="view_modes",
+        help="Choose one or more visualizations. Each selected view renders below with synchronized playback.",
+    )
+
+    keyboard_range_mode = st.selectbox(
+        "Keyboard range",
+        ["Full 88 Keys", "Auto-fit from notes"],
         index=0,
-        help="Pluggable visualizations that stay synchronized with the same scale playback.",
+        key="keyboard_range_mode",
+        help="Applies to Piano Keyboard view. Auto-fit zooms to the active note span.",
     )
 
     if audio_engine == "Public Web Samples":
@@ -1237,7 +2150,8 @@ with st.sidebar:
 
 scale_notes = build_scale(root, scale_kind, mode)
 
-selected_tuning = BASS_TUNING if view_mode == "Bass Guitar Neck" else STANDARD_TUNING
+has_bass_view = "Bass Guitar Neck" in (view_modes or [])
+selected_tuning = BASS_TUNING if has_bass_view else STANDARD_TUNING
 
 path_notes = build_single_scale_path(
     root=root,
@@ -1248,8 +2162,72 @@ path_notes = build_single_scale_path(
     tuning=selected_tuning,
 )
 
+midi_note_durations = None
+midi_scale_hint = None
+midi_playback_events = None
+midi_channels = []
+midi_channel_colors: dict[int, dict] = {}
+if playback_source == "Public MIDI":
+    midi_url = PUBLIC_MIDI_SOURCES.get(midi_source_name)
+    try:
+        with st.spinner("Loading and analyzing MIDI..."):
+            midi_bytes = _fetch_public_midi_bytes(str(midi_url or ""))
+            effective_midi_limit = None if midi_unlimited_notes else max(30, int(midi_max_notes))
+            midi_events = parse_midi_note_on_events(midi_bytes, max_events=effective_midi_limit)
+            midi_channels = detect_midi_channels(midi_events)
+            midi_channel_colors = build_channel_color_map(midi_channels)
+            midi_scale_hint = detect_midi_scale_hint(midi_bytes, midi_events)
+
+            if midi_scale_hint:
+                hint_root, hint_mode, _hint_source = midi_scale_hint
+                pending_updates = {}
+
+                apply_id = f"{midi_source_name}|{hint_root}|{hint_mode}"
+                if st.session_state.get("midi_auto_scale_applied_id") != apply_id:
+                    pending_updates["root_note"] = hint_root
+                    pending_updates["scale_kind"] = "Diatonic Modes"
+                    pending_updates["mode_name"] = hint_mode
+                    pending_updates["midi_auto_scale_applied_id"] = apply_id
+
+                root_fret_full = find_root_on_low_e(hint_root, 24, tuning=selected_tuning)
+                if root_fret_full is not None and root_fret_full > int(max_fret):
+                    fret_apply_id = f"{midi_source_name}|{hint_root}|{root_fret_full}|{len(selected_tuning)}"
+                    if st.session_state.get("midi_auto_fret_applied_id") != fret_apply_id:
+                        pending_updates["max_fret_value"] = int(root_fret_full)
+                        pending_updates["midi_auto_fret_applied_id"] = fret_apply_id
+
+                if pending_updates:
+                    st.session_state["midi_pending_widget_updates"] = pending_updates
+                    st.rerun()
+
+        path_notes, midi_note_durations, midi_playback_events = build_path_from_midi_events(
+            midi_events,
+            tuning=selected_tuning,
+            max_fret=max_fret,
+            max_notes=(None if midi_unlimited_notes else int(midi_max_notes)),
+        )
+        speed = max(0.05, float(midi_speed or 1.0))
+        if midi_note_durations:
+            midi_note_durations = [max(0.06, min(2.0, d / speed)) for d in midi_note_durations]
+        if midi_playback_events:
+            for ev in midi_playback_events:
+                base_dur = float(ev.get("duration", seconds_per_note) or seconds_per_note)
+                ev["duration"] = max(0.06, min(2.0, base_dur / speed))
+    except Exception as exc:
+        st.warning(f"Could not load MIDI source: {exc}")
+        path_notes = []
+        midi_note_durations = []
+        midi_playback_events = []
+        midi_channels = []
+        midi_channel_colors = {}
+
 st.subheader(f"{root} {mode}")
 st.caption(f"Scale family: {scale_kind}")
+if playback_source == "Public MIDI":
+    st.caption(f"MIDI source: {midi_source_name}")
+    if midi_scale_hint:
+        hint_root, hint_mode, hint_source = midi_scale_hint
+        st.caption(f"MIDI key: {hint_root} {hint_mode} ({hint_source})")
 
 col1, col2 = st.columns([1.3, 1])
 
@@ -1271,10 +2249,16 @@ with col2:
         st.markdown(f"**{common_name}**")
 
 if not path_notes:
-    st.warning(
-        "The selected root does not appear on the low E string within the visible fret range. "
-        "Increase the fret range."
-    )
+    if playback_source == "Public MIDI":
+        st.warning(
+            "No playable MIDI notes were mapped to the current view. "
+            "Try increasing Frets/Keys, selecting another MIDI file, or changing Instrument views."
+        )
+    else:
+        st.warning(
+            "The selected root does not appear on the low E string within the visible fret range. "
+            "Increase the fret range."
+        )
 else:
     start_fret = path_notes[0]["fret"]
     last_note = path_notes[-1]["note"]
@@ -1288,23 +2272,72 @@ else:
         f"on `{last_string}` string, fret `{last_fret}`"
     )
 
-    st.markdown(f"### {view_mode} + Synchronized Playback")
+    if "play_all_counter" not in st.session_state:
+        st.session_state.play_all_counter = 0
+    if "play_all_pending" not in st.session_state:
+        st.session_state.play_all_pending = False
 
-    st.components.v1.html(
-        render_synced_player_html(
-            root=root,
-            mode_name=mode,
-            path_notes=path_notes,
-            max_fret=max_fret,
-            seconds_per_note=seconds_per_note,
-            audio_engine=audio_engine,
-            web_sample_source=web_sample_source,
-            sound_preset=sound_preset,
-            view_mode=view_mode,
-        ),
-        height=580,
-        scrolling=False,
-    )
+    if not view_modes:
+        st.warning("Select at least one Instrument view in the sidebar.")
+    else:
+        channel_instrument_map: dict[int, str] = {}
+        if playback_source == "Public MIDI" and midi_channels and audio_engine == "Public Web Samples":
+            with st.expander("MIDI channel instrument mapping", expanded=False):
+                st.caption("Assign a web instrument per MIDI channel for multi-instrument files.")
+                channel_options = ["Off", *list(WEB_SAMPLE_SOURCES.keys())]
+                for ch in midi_channels:
+                    key = f"midi_channel_instrument_{int(ch)}"
+                    default_source = (web_sample_sources[0] if web_sample_sources else list(WEB_SAMPLE_SOURCES.keys())[0])
+                    if key not in st.session_state or st.session_state.get(key) not in channel_options:
+                        st.session_state[key] = default_source
+                    color_info = midi_channel_colors.get(int(ch), {"name": "Color", "hex": "#ffe066"})
+                    channel_instrument_map[int(ch)] = st.selectbox(
+                        f"Channel {int(ch) + 1} - {color_info.get('name', 'Color')}",
+                        options=channel_options,
+                        index=channel_options.index(st.session_state[key]) if st.session_state[key] in channel_options else 0,
+                        key=key,
+                    )
+
+        top_controls_col1, top_controls_col2 = st.columns([1, 4])
+        with top_controls_col1:
+            if st.button("▶ Play All", use_container_width=True):
+                st.session_state.play_all_counter = int(st.session_state.play_all_counter) + 1
+                st.session_state.play_all_pending = True
+
+        auto_play_nonce = int(st.session_state.play_all_counter) if st.session_state.play_all_pending else 0
+
+        for view_mode in view_modes:
+            st.markdown(f"### {view_mode} + Synchronized Playback")
+
+            st.components.v1.html(
+                render_synced_player_html(
+                    root=root,
+                    mode_name=mode,
+                    path_notes=path_notes,
+                    max_fret=max_fret,
+                    seconds_per_note=seconds_per_note,
+                    audio_engine=audio_engine,
+                    web_sample_sources=web_sample_sources,
+                    sound_preset=sound_preset,
+                    view_mode=view_mode,
+                    note_durations=midi_note_durations,
+                    play_all_nonce=auto_play_nonce,
+                    show_all_notes=playback_source == "Public MIDI",
+                    tuning=selected_tuning,
+                    overlay_scale_notes=scale_notes if playback_source == "Public MIDI" else None,
+                    overlay_root_note=root if playback_source == "Public MIDI" else None,
+                    playback_events=midi_playback_events if playback_source == "Public MIDI" else None,
+                    keyboard_range_mode=keyboard_range_mode,
+                    channel_instrument_map=channel_instrument_map if playback_source == "Public MIDI" else None,
+                    channel_color_map=midi_channel_colors if playback_source == "Public MIDI" else None,
+                ),
+                height=580,
+                scrolling=False,
+            )
+
+        # Consume one-shot trigger so later reruns do not auto-play again.
+        if st.session_state.play_all_pending:
+            st.session_state.play_all_pending = False
 
     with st.expander("Displayed scale path"):
         rows = []
